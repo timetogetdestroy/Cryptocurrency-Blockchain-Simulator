@@ -1,0 +1,339 @@
+#include <iostream>
+#include <string>
+#include <vector>
+#include <ctime>
+#include <sstream>
+#include <iomanip>
+#include <random>
+#include <chrono>
+#include <queue>
+#include <map>
+#include <limits>
+using namespace std;
+
+// Simple hash function for demonstration
+string calculateHash(const string& str)
+{
+    hash<string> hasher;
+    size_t hash = hasher(str);
+    stringstream ss;
+    ss << hex << setw(16) << setfill('0') << hash;
+    return ss.str();
+}
+
+// Transaction class to store transaction details
+class Transaction 
+{
+public:
+    string sender;
+    string receiver;
+    double amount;
+    time_t timestamp;
+    string signature;
+
+    Transaction(string s, string r, double a) 
+        : sender(s), receiver(r), amount(a)
+        {
+        timestamp = time(nullptr);
+        signature = generateSignature();
+    }
+
+private:
+    string generateSignature() 
+    {
+        stringstream ss;
+        ss << sender << receiver << amount << timestamp;
+        return calculateHash(ss.str());
+    }
+};
+
+// Merkle Tree Node for transaction verification
+class MerkleNode
+{
+public:
+    string hash;
+    MerkleNode *left, *right;
+
+    MerkleNode(string h) : hash(h), left(nullptr), right(nullptr) {}
+};
+
+// Block class representing each block in the blockchain
+class Block 
+{
+public:
+    int index;
+    time_t timestamp;
+    vector<Transaction> transactions;
+    string previousHash;
+    string hash;
+    int nonce;
+    MerkleNode* merkleRoot;
+
+    Block(int idx, const vector<Transaction>& trans, string prevHash) 
+        : index(idx), transactions(trans), previousHash(prevHash), nonce(0)
+        {
+        timestamp = time(nullptr);
+        merkleRoot = buildMerkleTree();
+        hash = calculateBlockHash();
+    }
+
+    string calculateBlockHash() const
+    {
+        stringstream ss;
+        ss << index << timestamp << previousHash << nonce;
+        for (const auto& trans : transactions)
+        {
+            ss << trans.signature;
+        }
+        return calculateHash(ss.str());
+    }
+
+    void mineBlock(int difficulty)
+    {
+        string target(difficulty, '0');
+        while (hash.substr(0, difficulty) != target) 
+        {
+            nonce++;
+            hash = calculateBlockHash();
+        }
+        cout << "Block mined! Hash: " << hash << endl;
+    }
+
+private:
+    MerkleNode* buildMerkleTree() 
+    {
+        vector<MerkleNode*> leaves;
+        for (const auto& trans : transactions)
+        {
+            leaves.push_back(new MerkleNode(trans.signature));
+        }
+        
+        while (leaves.size() > 1) 
+        {
+            vector<MerkleNode*> newLevel;
+            for (size_t i = 0; i < leaves.size(); i += 2) 
+            {
+                MerkleNode* left = leaves[i];
+                MerkleNode* right = (i + 1 < leaves.size()) ? leaves[i + 1] : left;
+                string combinedHash = calculateHash(left->hash + right->hash);
+                MerkleNode* parent = new MerkleNode(combinedHash);
+                parent->left = left;
+                parent->right = right;
+                newLevel.push_back(parent);
+            }
+            leaves = newLevel;
+        }
+        return leaves.empty() ? nullptr : leaves[0];
+    }
+};
+
+// Blockchain class managing the entire chain
+class Blockchain
+{
+private:
+    vector<Block> chain;
+    int difficulty;
+    vector<Transaction> pendingTransactions;
+    map<string, double> balances;
+
+    bool isValidChain() const
+    {
+        for (size_t i = 1; i < chain.size(); i++)
+        {
+            const Block& currentBlock = chain[i];
+            const Block& previousBlock = chain[i - 1];
+
+            if (currentBlock.hash != currentBlock.calculateBlockHash()) return false;
+            if (currentBlock.previousHash != previousBlock.hash) return false;
+        }
+        return true;
+    }
+
+public:
+    Blockchain() : difficulty(4)
+    {
+        // Create genesis block
+        vector<Transaction> genesis;
+        genesis.emplace_back("Genesis", "System", 0);
+        chain.emplace_back(0, genesis, "0");
+        
+        // Initialize some wallets with initial balance
+        balances["Alice"] = 100.0;
+        balances["Bob"] = 100.0;
+        balances["Charlie"] = 100.0;
+    }
+
+    void addTransaction(const Transaction& transaction)
+    {
+        // Verify sender has sufficient balance
+        if (balances[transaction.sender] >= transaction.amount)
+        {
+            pendingTransactions.push_back(transaction);
+            cout << "Transaction added to pending pool" << endl;
+        } else 
+        {
+            cout << "Transaction rejected: Insufficient balance" << endl;
+        }
+    }
+
+    void minePendingTransactions(string minerAddress) 
+    {
+        if (pendingTransactions.empty())
+        {
+            cout << "No pending transactions to mine" << endl;
+            return;
+        }
+
+        Block newBlock(chain.size(), pendingTransactions, getLatestBlock().hash);
+        cout << "Mining block..." << endl;
+        newBlock.mineBlock(difficulty);
+
+        cout << "Block successfully mined!" << endl;
+        chain.push_back(newBlock);
+
+        // Update balances
+        for (const auto& trans : pendingTransactions)
+        {
+            balances[trans.sender] -= trans.amount;
+            balances[trans.receiver] += trans.amount;
+        }
+
+        // Reward the miner
+        balances[minerAddress] += 10.0;
+        pendingTransactions.clear();
+    }
+
+    const Block& getLatestBlock() const
+    {
+        return chain.back();
+    }
+
+    void displayChain() const
+    {
+        cout << "\n=== BLOCKCHAIN STATE ===" << endl;
+        for (const auto& block : chain) 
+        {
+            cout << "\nBlock #" << block.index << endl;
+            cout << "Timestamp: " << ctime(&block.timestamp);
+            cout << "Previous Hash: " << block.previousHash << endl;
+            cout << "Hash: " << block.hash << endl;
+            cout << "Nonce: " << block.nonce << endl;
+            cout << "Transactions:" << endl;
+            for (const auto& trans : block.transactions) 
+            {
+                cout << "  " << trans.sender << " -> " << trans.receiver 
+                     << ": " << trans.amount << " coins" << endl;
+            }
+        }
+    }
+
+    void displayBalances() const
+    {
+        cout << "\n=== WALLET BALANCES ===" << endl;
+        for (const auto& [wallet, balance] : balances)
+        {
+            cout << wallet << ": " << balance << " coins" << endl;
+        }
+    }
+};
+
+// Clear input buffer
+void clearInputBuffer()
+{
+    cin.clear();
+    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+}
+
+// Get valid string input
+string getValidString(const string& prompt) 
+{
+    string input;
+    cout << prompt;
+    getline(cin, input);
+    while (input.empty()) 
+    {
+        cout << "Input cannot be empty. " << prompt;
+        getline(cin, input);
+    }
+    return input;
+}
+
+// Get valid amount
+double getValidAmount()
+{
+    double amount;
+    cout << "Enter amount: ";
+    while (!(cin >> amount) || amount <= 0) 
+    {
+        cout << "Invalid amount. Please enter a positive number: ";
+        clearInputBuffer();
+    }
+    clearInputBuffer();
+    return amount;
+}
+
+// Interactive menu for the simulator
+void displayMenu() 
+{
+    cout << "\n=== CRYPTOCURRENCY BLOCKCHAIN SIMULATOR ===" << endl;
+    cout << "1. Add new transaction" << endl;
+    cout << "2. Mine pending transactions" << endl;
+    cout << "3. Display blockchain" << endl;
+    cout << "4. Display wallet balances" << endl;
+    cout << "5. Exit" << endl;
+    cout << "Choose an option: ";
+}
+
+int main()
+{
+    Blockchain cryptoChain;
+    string senderWallet, receiverWallet, minerWallet;
+    double amount;
+    int choice;
+
+    cout << "Welcome to CryptoChain Simulator!" << endl;
+
+    while (true)
+    {
+        displayMenu();
+        
+        while (!(cin >> choice))
+        {
+            cout << "Invalid input. Please enter a number (1-5): ";
+            clearInputBuffer();
+        }
+        clearInputBuffer();
+
+        switch (choice)
+        {
+            case 1:
+                senderWallet = getValidString("Enter sender's wallet: ");
+                receiverWallet = getValidString("Enter receiver's wallet: ");
+                amount = getValidAmount();
+                cryptoChain.addTransaction(Transaction(senderWallet, receiverWallet, amount));
+                break;
+
+            case 2:
+                minerWallet = getValidString("Enter miner's wallet: ");
+                cryptoChain.minePendingTransactions(minerWallet);
+                break;
+
+            case 3:
+                cryptoChain.displayChain();
+                break;
+
+            case 4:
+                cryptoChain.displayBalances();
+                break;
+
+            case 5:
+                cout << "Thank you for using CryptoChain Simulator!" << endl;
+                return 0;
+
+            default:
+                cout << "Invalid option. Please enter a number between 1 and 5." << endl;
+        }
+    }
+
+    return 0;
+}
